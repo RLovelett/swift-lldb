@@ -79,7 +79,7 @@ public:
   /// @return
   ///     An
   Status AttachWaitProcess(std::string waitfor_process_name,
-                           useconds_t waitfor_interval = 1000);
+                           std::chrono::milliseconds waitfor_interval = std::chrono::milliseconds(1000));
 
   //------------------------------------------------------------------
   // NativeProcessProtocol::NativeDelegate overrides

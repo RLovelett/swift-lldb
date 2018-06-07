@@ -331,38 +331,56 @@ Status GDBRemoteCommunicationServerLLGS::AttachToProcess(lldb::pid_t pid) {
 }
 
 Status GDBRemoteCommunicationServerLLGS::AttachWaitProcess(
-    std::string waitfor_process_name, useconds_t waitfor_interval) {
+    std::string waitfor_process_name,
+    std::chrono::milliseconds waitfor_interval) {
   Log *log(GetLogIfAnyCategoriesSet(LIBLLDB_LOG_PROCESS));
-  if (log)
-    log->Printf("GDBRemoteCommunicationServerLLGS::%s waitfor_process_name %s",
-                __FUNCTION__, waitfor_process_name.c_str());
 
-  ProcessInstanceInfoList current_process_list;
+  // Create the matcher used to search the process list
+  ProcessInstanceInfoList exclusion_list;
   ProcessInstanceInfoMatch match_info;
-  match_info.GetProcessInfo().GetExecutableFile().SetFile(waitfor_process_name,
-                                                          false);
+  match_info.GetProcessInfo().GetExecutableFile()
+    .SetFile(waitfor_process_name, false);
   match_info.SetNameMatchType(NameMatch::EndsWith);
-  uint32_t matches = Host::FindProcesses(match_info, current_process_list);
-  if (matches && log) {
-    log->Printf("GDBRemoteCommunicationServerLLGS::%s current process list "
-                "%" PRIu32, __FUNCTION__, matches);
-  }
+
+  // Create the excluded process list before polling begins
+  Host::FindProcesses(match_info, exclusion_list);
+
+  if (log)
+    log->Printf("GDBRemoteCommunicationServerLLGS::%s waiting for '%s' "
+                "to appear", __FUNCTION__, waitfor_process_name.c_str());
 
   lldb::pid_t waitfor_pid = LLDB_INVALID_PROCESS_ID;
   ProcessInstanceInfoList loop_process_list;
 
   while (waitfor_pid == LLDB_INVALID_PROCESS_ID) {
     loop_process_list.Clear();
-    if (Host::FindProcesses(match_info, loop_process_list) && log) {
-      log->Printf("GDBRemoteCommunicationServerLLGS::%s loop process list "
-                  "%" PRIu64, __FUNCTION__, loop_process_list.GetSize());
-      waitfor_pid = loop_process_list.GetProcessIDAtIndex(0);
-      break;
+    if (Host::FindProcesses(match_info, loop_process_list)) {
+      // The for loop is to checking for the first matching process that was
+      // not in the excluded process list.
+      for(size_t i = 0; i < loop_process_list.GetSize(); i++) {
+        waitfor_pid = loop_process_list.GetProcessIDAtIndex(i);
+        for(size_t j = 0; j < exclusion_list.GetSize(); j++) {
+          if (exclusion_list.GetProcessIDAtIndex(j) == waitfor_pid) {
+            waitfor_pid = LLDB_INVALID_PROCESS_ID;
+          }
+        }
+
+        // If waitfor_pid is not in our exclusion list then use it
+        if (waitfor_pid != LLDB_INVALID_PROCESS_ID) {
+          if (log)
+            log->Printf("GDBRemoteCommunicationServerLLGS::%s found pid "
+                        "%" PRIu64, __FUNCTION__, waitfor_pid);
+          break;
+        }
+      }
     }
-    if (log)
-      log->Printf("GDBRemoteCommunicationServerLLGS::%s sleep "
-                  "%" PRIu64, __FUNCTION__, waitfor_interval);
-    sleep(waitfor_interval);
+    // If we have not found the new process sleep until next poll.
+    if (waitfor_pid == LLDB_INVALID_PROCESS_ID) {
+      if (log)
+        log->Printf("GDBRemoteCommunicationServerLLGS::%s sleep "
+                    "%" PRIu64, __FUNCTION__, waitfor_interval);
+      std::this_thread::sleep_for(waitfor_interval);
+    }
   }
 
   return AttachToProcess(waitfor_pid);
