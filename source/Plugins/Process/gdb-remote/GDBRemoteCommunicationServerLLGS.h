@@ -74,10 +74,12 @@ public:
   /// Wait to attach to a process with a given name.
   ///
   /// This method supports waiting for the next instance of a process
-  /// by the name and attaching llgs to that via the configured Platform.
+  /// with a given name and attaching llgs to that via the configured
+  /// Platform.
   ///
   /// @return
-  ///     An
+  ///     An Status object indicating the success or failure of the
+  ///     attach operation.
   Status AttachWaitProcess(std::string waitfor_process_name,
                            std::chrono::milliseconds waitfor_interval = std::chrono::milliseconds(1000));
 
