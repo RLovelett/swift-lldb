@@ -164,6 +164,9 @@ void GDBRemoteCommunicationServerLLGS::RegisterPacketHandlers() {
       StringExtractorGDBRemote::eServerPacketType_vAttach,
       &GDBRemoteCommunicationServerLLGS::Handle_vAttach);
   RegisterMemberFunctionHandler(
+      StringExtractorGDBRemote::eServerPacketType_vAttachWait,
+      &GDBRemoteCommunicationServerLLGS::Handle_vAttachWait);
+  RegisterMemberFunctionHandler(
       StringExtractorGDBRemote::eServerPacketType_vCont,
       &GDBRemoteCommunicationServerLLGS::Handle_vCont);
   RegisterMemberFunctionHandler(
@@ -325,6 +328,44 @@ Status GDBRemoteCommunicationServerLLGS::AttachToProcess(lldb::pid_t pid) {
 
   printf("Attached to process %" PRIu64 "...\n", pid);
   return Status();
+}
+
+Status GDBRemoteCommunicationServerLLGS::AttachWaitProcess(
+    std::string waitfor_process_name, useconds_t waitfor_interval) {
+  Log *log(GetLogIfAnyCategoriesSet(LIBLLDB_LOG_PROCESS));
+  if (log)
+    log->Printf("GDBRemoteCommunicationServerLLGS::%s waitfor_process_name %s",
+                __FUNCTION__, waitfor_process_name.c_str());
+
+  ProcessInstanceInfoList current_process_list;
+  ProcessInstanceInfoMatch match_info;
+  match_info.GetProcessInfo().GetExecutableFile().SetFile(waitfor_process_name,
+                                                          false);
+  match_info.SetNameMatchType(NameMatch::EndsWith);
+  uint32_t matches = Host::FindProcesses(match_info, current_process_list);
+  if (matches && log) {
+    log->Printf("GDBRemoteCommunicationServerLLGS::%s current process list "
+                "%" PRIu32, __FUNCTION__, matches);
+  }
+
+  lldb::pid_t waitfor_pid = LLDB_INVALID_PROCESS_ID;
+  ProcessInstanceInfoList loop_process_list;
+
+  while (waitfor_pid == LLDB_INVALID_PROCESS_ID) {
+    loop_process_list.Clear();
+    if (Host::FindProcesses(match_info, loop_process_list) && log) {
+      log->Printf("GDBRemoteCommunicationServerLLGS::%s loop process list "
+                  "%" PRIu64, __FUNCTION__, loop_process_list.GetSize());
+      waitfor_pid = loop_process_list.GetProcessIDAtIndex(0);
+      break;
+    }
+    if (log)
+      log->Printf("GDBRemoteCommunicationServerLLGS::%s sleep "
+                  "%" PRIu64, __FUNCTION__, waitfor_interval);
+    sleep(waitfor_interval);
+  }
+
+  return AttachToProcess(waitfor_pid);
 }
 
 void GDBRemoteCommunicationServerLLGS::InitializeDelegate(
@@ -2936,6 +2977,39 @@ GDBRemoteCommunicationServerLLGS::Handle_vAttach(
                   "pid %" PRIu64 ": %s\n",
                   __FUNCTION__, pid, error.AsCString());
     return SendErrorResponse(0x01);
+  }
+
+  // Notify we attached by sending a stop packet.
+  return SendStopReasonForState(m_debugged_process_up->GetState());
+}
+
+GDBRemoteCommunication::PacketResult
+GDBRemoteCommunicationServerLLGS::Handle_vAttachWait(
+    StringExtractorGDBRemote &packet) {
+  Log *log(GetLogIfAnyCategoriesSet(LIBLLDB_LOG_PROCESS));
+
+  // Consume the ';' after vAttach.
+  packet.SetFilePos(strlen("vAttachWait"));
+  if (!packet.GetBytesLeft() || packet.GetChar() != ';')
+    return SendIllFormedResponse(packet, "vAttachWait missing expected ';'");
+
+  // Allocate the buffer for the process name from vAttachWait
+  std::string process_name;
+  if (!packet.GetHexByteString(process_name))
+    return SendIllFormedResponse(packet,
+                                 "vAttachWait failed to parse process name");
+
+  if (log)
+    log->Printf("GDBRemoteCommunicationServerLLGS::%s attempting to attach to "
+                "process named %s", __FUNCTION__, process_name.c_str());
+
+  Status error = AttachWaitProcess(process_name);
+
+  if (error.Fail()) {
+    if (log)
+      log->Printf("GDBRemoteCommunicationServerLLGS::%s failed to attach to "
+                  "process named %s: %s\n", __FUNCTION__, process_name.c_str(),
+                  error.AsCString());
   }
 
   // Notify we attached by sending a stop packet.
