@@ -331,23 +331,23 @@ Status GDBRemoteCommunicationServerLLGS::AttachToProcess(lldb::pid_t pid) {
 }
 
 Status GDBRemoteCommunicationServerLLGS::AttachWaitProcess(
-    std::string waitfor_process_name,
-    std::chrono::milliseconds waitfor_interval) {
+    llvm::StringRef process_name) {
   Log *log(GetLogIfAnyCategoriesSet(LIBLLDB_LOG_PROCESS));
+  // TODO: Make the polling interval configurable
+  milliseconds waitfor_interval = std::chrono::seconds(1);
 
   // Create the matcher used to search the process list
   ProcessInstanceInfoList exclusion_list;
   ProcessInstanceInfoMatch match_info;
   match_info.GetProcessInfo().GetExecutableFile()
-    .SetFile(waitfor_process_name, false);
+    .SetFile(process_name, false);
   match_info.SetNameMatchType(NameMatch::EndsWith);
 
   // Create the excluded process list before polling begins
   Host::FindProcesses(match_info, exclusion_list);
 
   if (log)
-    log->Printf("GDBRemoteCommunicationServerLLGS::%s waiting for '%s' "
-                "to appear", __FUNCTION__, waitfor_process_name.c_str());
+    LLDB_LOG(log, "waiting for '{0}' to appear", process_name);
 
   lldb::pid_t waitfor_pid = LLDB_INVALID_PROCESS_ID;
   ProcessInstanceInfoList loop_process_list;
@@ -368,8 +368,7 @@ Status GDBRemoteCommunicationServerLLGS::AttachWaitProcess(
         // If waitfor_pid is not in our exclusion list then use it
         if (waitfor_pid != LLDB_INVALID_PROCESS_ID) {
           if (log)
-            log->Printf("GDBRemoteCommunicationServerLLGS::%s found pid "
-                        "%" PRIu64, __FUNCTION__, waitfor_pid);
+            LLDB_LOG(log, "found pid {1}", waitfor_pid);
           break;
         }
       }
@@ -377,8 +376,7 @@ Status GDBRemoteCommunicationServerLLGS::AttachWaitProcess(
     // If we have not found the new process sleep until next poll.
     if (waitfor_pid == LLDB_INVALID_PROCESS_ID) {
       if (log)
-        log->Printf("GDBRemoteCommunicationServerLLGS::%s sleep "
-                    "%" PRIu64, __FUNCTION__, waitfor_interval);
+        LLDB_LOG(log, "sleep {1} seconds", waitfor_interval);
       std::this_thread::sleep_for(waitfor_interval);
     }
   }
@@ -3018,16 +3016,15 @@ GDBRemoteCommunicationServerLLGS::Handle_vAttachWait(
                                  "vAttachWait failed to parse process name");
 
   if (log)
-    log->Printf("GDBRemoteCommunicationServerLLGS::%s attempting to attach to "
-                "process named %s", __FUNCTION__, process_name.c_str());
+    LLDB_LOG(log, "attempting to attach to process named '{0}'", process_name);
 
   Status error = AttachWaitProcess(process_name);
 
   if (error.Fail()) {
     if (log)
-      log->Printf("GDBRemoteCommunicationServerLLGS::%s failed to attach to "
-                  "process named %s: %s\n", __FUNCTION__, process_name.c_str(),
-                  error.AsCString());
+      LLDB_LOG(log, "failed to attach to process named '{0}': {1}",
+               process_name, error);
+    return SendErrorResponse(error);
   }
 
   // Notify we attached by sending a stop packet.

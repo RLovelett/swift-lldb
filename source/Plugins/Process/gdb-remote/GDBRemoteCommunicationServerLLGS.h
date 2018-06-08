@@ -80,8 +80,7 @@ public:
   /// @return
   ///     An Status object indicating the success or failure of the
   ///     attach operation.
-  Status AttachWaitProcess(std::string waitfor_process_name,
-                           std::chrono::milliseconds waitfor_interval = std::chrono::milliseconds(1000));
+  Status AttachWaitProcess(llvm::StringRef process_name);
 
   //------------------------------------------------------------------
   // NativeProcessProtocol::NativeDelegate overrides
